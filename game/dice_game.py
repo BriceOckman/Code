@@ -1,8 +1,17 @@
+
 from .dice_roller import DiceRoller
 from cards.card import Card
 from .character import Character
 from .game_io import GameIO
+from .mode import NormalMode, RiskMode, DefendMode
 import time
+
+# Map string to mode class
+MODE_MAP = {
+    "normal": NormalMode(),
+    "risk": RiskMode(),
+    "defend": DefendMode(),
+}
 
 class DiceGame:
     """
@@ -84,30 +93,15 @@ class DiceGame:
         """
         self.ask_use_card()
         self.io.input("Press Enter to roll your dice...")
-        dice_count = 2
-        if mode == "defend":
-            dice_count = 1
-        elif mode == "risk":
-            dice_count = 3
+        mode_obj = MODE_MAP.get(mode, NormalMode())
+        dice_count = mode_obj.get_player_dice_count()
         rolls = DiceRoller.roll(dice_count)
         player_roll = sum(rolls)
         self.last_player_roll = player_roll
         self.io.print(f"Rolling player's Dice: {rolls}")
         time.sleep(1)
         self.io.print(f"You rolled: {player_roll} ({dice_count} dice)")
-
-        if mode == "defend" and 6 in rolls:
-            self.io.print("You rolled a 6 while defending! You draw a card.")
-            self.player.card = self.draw_card("player")
-
-        if mode != "defend" and len(rolls) >= 2 and len(set(rolls)) == 1 and not self.player.card:
-            self.io.print("You rolled doubles!")
-            self.player.card = self.draw_card("player")
-            use_now = self.io.input("Use card now? (y/n): ").strip().lower()
-            if use_now == "y":
-                self.player.card.use(self)
-                self.player.card = None
-
+        mode_obj.player_special(self, rolls)
         return player_roll, rolls
 
     def boss_turn(self, mode="normal"):
@@ -120,27 +114,13 @@ class DiceGame:
         """
         self.io.print("Boss's turn...")
         time.sleep(1)
-        dice_count = 1
-        if mode == "risk":
-            dice_count = 2
+        mode_obj = MODE_MAP.get(mode, NormalMode())
+        dice_count = mode_obj.get_boss_dice_count()
         boss_rolls = DiceRoller.roll(dice_count)
         boss_roll = sum(boss_rolls)
         self.last_boss_roll = boss_roll
         self.io.print(f"Boss rolled: {boss_rolls} ({dice_count} die{'s' if dice_count > 1 else ''})")
-
-        if mode == "normal" and 1 in boss_rolls:
-            self.io.print("Boss rolled a 1!")
-            self.boss.card = self.draw_card("boss")
-            self.io.print("Boss uses their card immediately!")
-            self.boss.card.use(self, who="boss")
-            self.boss.card = None
-        elif mode == "risk" and len(boss_rolls) == 2 and boss_rolls[0] == boss_rolls[1]:
-            self.io.print("Boss rolled doubles!")
-            self.boss.card = self.draw_card("boss")
-            self.io.print("Boss uses their card immediately!")
-            self.boss.card.use(self, who="boss")
-            self.boss.card = None
-
+        mode_obj.boss_special(self, boss_rolls)
         return boss_roll, boss_rolls
 
     def resolve_turn(self, player_roll, boss_roll, mode="normal", player_rolls=None, boss_rolls=None):
@@ -153,37 +133,8 @@ class DiceGame:
             player_rolls (list): Individual dice rolls for the player.
             boss_rolls (list): Individual dice rolls for the boss.
         """
-        damage_penalty = self.player.damage_penalty
-        self.player.damage_penalty = 0
-        life_steal = self.player.life_steal
-        self.player.life_steal = False
-
-        if mode == "defend":
-            if player_roll == boss_roll:
-                self.io.print("You matched the boss's roll! No damage taken.")
-            else:
-                damage = boss_roll // 2
-                self.player.take_damage(damage)
-                self.io.print(f"You defended! You take only {damage} damage.")
-        else:
-            if player_roll > boss_roll:
-                damage = player_roll - boss_roll - damage_penalty
-                damage = max(0, damage)
-                self.boss.take_damage(damage)
-                self.io.print(f"You hit the boss for {damage} damage!")
-                if life_steal:
-                    self.player.hp += damage
-                    self.io.print(f"You heal {damage} HP from life steal!")
-            else:
-                damage = boss_roll
-                if life_steal:
-                    damage += 1
-                self.player.take_damage(damage)
-                self.io.print(f"The house hits you for {damage} damage!")
-
-        time.sleep(1)
-        self.io.print(f"Your HP: {self.player.hp} (Shield: {self.player.shield})")
-        self.io.print(f"Boss HP: {self.boss.hp}\n")
+        mode_obj = MODE_MAP.get(mode, NormalMode())
+        mode_obj.resolve(self, player_roll, boss_roll, player_rolls, boss_rolls)
 
     def play(self):
         """
